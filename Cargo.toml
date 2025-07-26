@@ -4,3 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+imgui = "0.12.0"
+waywin = { git = "https://github.com/Kotexander/waywin" }
+
+
+[dev-dependencies]
+imgui-vulkano-renderer = { git = "https://github.com/Kotexander/imgui-vulkano-renderer" }
+vulkano = "0.35.1"
