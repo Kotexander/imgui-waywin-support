@@ -23,14 +23,14 @@ use vulkano::{
 };
 use waywin::{
     Waywin, Window,
-    event::{Event, WindowEvent},
+    event::{WaywinEvent, WindowEvent},
 };
 
 fn main() {
     let mut waywin = Waywin::init("imgui-demo").unwrap();
     let mut app = App::new(&mut waywin);
-    waywin.run(move |event| {
-        app.handle_event(event);
+    waywin.run(move |event, running| {
+        app.handle_event(event, running);
     });
 }
 
@@ -206,114 +206,122 @@ impl App {
             future,
         }
     }
-    pub fn handle_event(&mut self, event: WindowEvent) {
-        if event.window_id != self.window.id() {
-            return;
-        }
-        match &event.kind {
-            Event::Resized => {
-                self.recreate_swapchain = true;
-            }
-            Event::Paint => {
-                if self.recreate_swapchain {
-                    self.recreate_swapchain = false;
-
-                    let (swapchain, images) = self
-                        .swapchain
-                        .recreate(SwapchainCreateInfo {
-                            image_extent: self.window.get_physical_size().into(),
-                            ..self.swapchain.create_info()
-                        })
-                        .unwrap();
-                    self.swapchain = swapchain;
-                    self.framebuffers = create_framebuffers(&self.render_pass, images);
-
-                    let (w, h) = self.window.get_physical_size();
-                    self.viewport = Viewport {
-                        extent: [w as f32, h as f32],
-                        ..Default::default()
-                    };
-                }
-
-                let (image_index, suboptimal, acquire_future) =
-                    match acquire_next_image(self.swapchain.clone(), None)
-                        .map_err(Validated::unwrap)
-                    {
-                        Ok(r) => r,
-                        Err(VulkanError::OutOfDate) => {
-                            self.recreate_swapchain = true;
-                            return;
-                        }
-                        Err(e) => panic!("failed to acquire next image: {e}"),
-                    };
-                if suboptimal {
-                    self.recreate_swapchain = true;
-                }
-
-                self.imgui_support
-                    .prepare_frame(&mut self.imgui, &self.window);
-                let ui = self.imgui.new_frame();
-                ui.show_demo_window(&mut true);
-                self.imgui_support.prepare_render(ui, &self.window);
-
-                let mut builder = AutoCommandBufferBuilder::primary(
-                    self.cmd_alloc.clone(),
-                    self.queue.queue_family_index(),
-                    CommandBufferUsage::OneTimeSubmit,
-                )
-                .unwrap();
-                builder
-                    .begin_render_pass(
-                        RenderPassBeginInfo {
-                            render_pass: self.render_pass.clone(),
-                            clear_values: vec![Some(ClearValue::Float([0.1, 0.2, 0.3, 1.0]))],
-                            ..RenderPassBeginInfo::framebuffer(
-                                self.framebuffers[image_index as usize].clone(),
-                            )
-                        },
-                        SubpassBeginInfo::default(),
-                    )
-                    .unwrap()
-                    .set_viewport(0, [self.viewport.clone()].into_iter().collect())
-                    .unwrap();
-                self.imgui_renderer.render(&mut self.imgui, &mut builder);
-                builder.end_render_pass(Default::default()).unwrap();
-
-                let future = self
-                    .future
-                    .take()
-                    .unwrap()
-                    .join(acquire_future)
-                    .then_execute(self.queue.clone(), builder.build().unwrap())
-                    .unwrap()
-                    .then_swapchain_present(
-                        self.queue.clone(),
-                        SwapchainPresentInfo::swapchain_image_index(
-                            self.swapchain.clone(),
-                            image_index,
-                        ),
-                    )
-                    .then_signal_fence_and_flush();
-
-                match future.map_err(Validated::unwrap) {
-                    Ok(mut future) => {
-                        future.cleanup_finished();
-                        self.future = Some(future.boxed());
+    pub fn handle_event(&mut self, event: WaywinEvent, running: &mut bool) {
+        match &event {
+            WaywinEvent::WindowEvent { event, window_id } if *window_id == self.window.id() => {
+                match event {
+                    WindowEvent::Close => {
+                        *running = false;
                     }
-                    Err(VulkanError::OutOfDate) => {
+                    WindowEvent::Resized => {
                         self.recreate_swapchain = true;
-                        self.future = Some(vulkano::sync::now(self.device.clone()).boxed());
                     }
-                    Err(e) => {
-                        panic!("failed to flush future: {e}");
+                    WindowEvent::Paint => {
+                        if self.recreate_swapchain {
+                            self.recreate_swapchain = false;
+
+                            let (swapchain, images) = self
+                                .swapchain
+                                .recreate(SwapchainCreateInfo {
+                                    image_extent: self.window.get_physical_size().into(),
+                                    ..self.swapchain.create_info()
+                                })
+                                .unwrap();
+                            self.swapchain = swapchain;
+                            self.framebuffers = create_framebuffers(&self.render_pass, images);
+
+                            let (w, h) = self.window.get_physical_size();
+                            self.viewport = Viewport {
+                                extent: [w as f32, h as f32],
+                                ..Default::default()
+                            };
+                        }
+
+                        let (image_index, suboptimal, acquire_future) =
+                            match acquire_next_image(self.swapchain.clone(), None)
+                                .map_err(Validated::unwrap)
+                            {
+                                Ok(r) => r,
+                                Err(VulkanError::OutOfDate) => {
+                                    self.recreate_swapchain = true;
+                                    return;
+                                }
+                                Err(e) => panic!("failed to acquire next image: {e}"),
+                            };
+                        if suboptimal {
+                            self.recreate_swapchain = true;
+                        }
+
+                        self.imgui_support
+                            .prepare_frame(&mut self.imgui, &self.window);
+                        let ui = self.imgui.new_frame();
+                        ui.show_demo_window(&mut true);
+                        self.imgui_support.prepare_render(ui, &self.window);
+
+                        let mut builder = AutoCommandBufferBuilder::primary(
+                            self.cmd_alloc.clone(),
+                            self.queue.queue_family_index(),
+                            CommandBufferUsage::OneTimeSubmit,
+                        )
+                        .unwrap();
+                        builder
+                            .begin_render_pass(
+                                RenderPassBeginInfo {
+                                    render_pass: self.render_pass.clone(),
+                                    clear_values: vec![Some(ClearValue::Float([
+                                        0.1, 0.2, 0.3, 1.0,
+                                    ]))],
+                                    ..RenderPassBeginInfo::framebuffer(
+                                        self.framebuffers[image_index as usize].clone(),
+                                    )
+                                },
+                                SubpassBeginInfo::default(),
+                            )
+                            .unwrap()
+                            .set_viewport(0, [self.viewport.clone()].into_iter().collect())
+                            .unwrap();
+                        self.imgui_renderer.render(&mut self.imgui, &mut builder);
+                        builder.end_render_pass(Default::default()).unwrap();
+
+                        let future = self
+                            .future
+                            .take()
+                            .unwrap()
+                            .join(acquire_future)
+                            .then_execute(self.queue.clone(), builder.build().unwrap())
+                            .unwrap()
+                            .then_swapchain_present(
+                                self.queue.clone(),
+                                SwapchainPresentInfo::swapchain_image_index(
+                                    self.swapchain.clone(),
+                                    image_index,
+                                ),
+                            )
+                            .then_signal_fence_and_flush();
+
+                        match future.map_err(Validated::unwrap) {
+                            Ok(mut future) => {
+                                future.cleanup_finished();
+                                self.future = Some(future.boxed());
+                            }
+                            Err(VulkanError::OutOfDate) => {
+                                self.recreate_swapchain = true;
+                                self.future = Some(vulkano::sync::now(self.device.clone()).boxed());
+                            }
+                            Err(e) => {
+                                panic!("failed to flush future: {e}");
+                            }
+                        };
+                        self.window.request_redraw();
                     }
-                };
-                self.window.request_redraw();
+                    _ => {}
+                }
             }
             _ => {}
         }
+
         self.imgui_support
-            .handle_event(&mut self.imgui, &self.window, event.kind);
+            .handle_event(&mut self.imgui, &self.window, event);
     }
 }
 
